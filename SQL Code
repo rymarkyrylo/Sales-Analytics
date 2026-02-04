@@ -1,102 +1,97 @@
-with
-acc_metr AS(
+WITH
+  acc_metr AS (
   SELECT
     s.date AS date,
     sp.country AS country,
     a.send_interval AS send_interval,
     a.is_verified AS is_verified,
     a.is_unsubscribed AS is_unsubscribed,
-    COUNT(DISTINCT a.id) as account_cnt
-    FROM
-    `DA.account` a
+    COUNT(DISTINCT a.id) AS account_cnt
+  FROM
+    `DA.account` AS a
   JOIN
-    `DA.account_session` acs
-  ON
-    a.id = acs.account_id
+    `DA.account_session` AS acs
+    ON a.id = acs.account_id
   JOIN
-    `DA.session` s
-  ON
-    acs.ga_session_id = s.ga_session_id
+    `DA.session` AS s
+    ON acs.ga_session_id = s.ga_session_id
   JOIN
-    `DA.session_params` sp
-  ON
-    acs.ga_session_id = sp.ga_session_id
+    `DA.session_params` AS sp
+    ON acs.ga_session_id = sp.ga_session_id
   GROUP BY
     s.date,
     sp.country,
     send_interval,
     a.is_verified,
-    a.is_unsubscribed),
+    a.is_unsubscribed ),
 
-    em_metr as (
-      select date_add(s.date, INTERVAL es.sent_date day) as sent_date,
-      sp.country as country,
-      a.send_interval as send_interval,
-      a.is_verified as is_verified,
-      a.is_unsubscribed as is_unsubscribed,
-      0 as account_cnt,
-      count(distinct es.id_message) as sent_msg,
-      count(distinct eo.id_message) as open_msg,
-      count(distinct ev.id_message) as visit_msg
-   FROM
-    `DA.email_sent` es
+  em_metr AS (
+  SELECT
+    -- Calculation of actual date using the offset
+    DATE_ADD(s.date, INTERVAL es.sent_date DAY) AS sent_date,
+    sp.country AS country,
+    a.send_interval AS send_interval,
+    a.is_verified AS is_verified,
+    a.is_unsubscribed AS is_unsubscribed,
+    0 AS account_cnt,
+    COUNT(DISTINCT es.id_message) AS sent_msg,
+    COUNT(DISTINCT eo.id_message) AS open_msg,
+    COUNT(DISTINCT ev.id_message) AS visit_msg
+  FROM
+    `DA.email_sent` AS es
   LEFT JOIN
-    `DA.email_open` eo
-  ON
-    es.id_message = eo.id_message
+    `DA.email_open` AS eo
+    ON es.id_message = eo.id_message
   LEFT JOIN
-    `DA.email_visit` ev
-  ON
-    es.id_message = ev.id_message
+    `DA.email_visit` AS ev
+    ON es.id_message = ev.id_message
   JOIN
-    `DA.account` a
-  ON
-    es.id_account = a.id
+    `DA.account` AS a
+    ON es.id_account = a.id
   JOIN
-    `DA.account_session` acs
-  ON
-    a.id = acs.account_id
+    `DA.account_session` AS acs
+    ON a.id = acs.account_id
   JOIN
-    `DA.session` s
-  ON
-    acs.ga_session_id = s.ga_session_id
+    `DA.session` AS s
+    ON acs.ga_session_id = s.ga_session_id
   JOIN
-    `DA.session_params` sp
-  ON
-    acs.ga_session_id = sp.ga_session_id
-    group by
+    `DA.session_params` AS sp
+    ON acs.ga_session_id = sp.ga_session_id
+  GROUP BY
     sent_date,
     country,
     send_interval,
     is_verified,
-    is_unsubscribed
-),
+    is_unsubscribed ),
 
-data_all as (
-  select date,
-  country,
-   send_interval,
-  is_verified,
-  is_unsubscribed,
-  0 as sent_msg,
-  0 as open_msg,
-  0 as visit_msg,
-  account_cnt
- from acc_metr
-  union all
-  select  sent_date,
-     country,
-      send_interval,
-       is_verified,
-      is_unsubscribed,
-      sent_msg,
-      open_msg,
-       visit_msg,
-      0 as account_cnt
-  from em_metr
-),
+  data_all AS (
+  SELECT
+    date,
+    country,
+    send_interval,
+    is_verified,
+    is_unsubscribed,
+    0 AS sent_msg,
+    0 AS open_msg,
+    0 AS visit_msg,
+    account_cnt
+  FROM
+    acc_metr
+  UNION ALL
+  SELECT
+    sent_date AS date, -- Aligning column names for UNION
+    country,
+    send_interval,
+    is_verified,
+    is_unsubscribed,
+    sent_msg,
+    open_msg,
+    visit_msg,
+    0 AS account_cnt
+  FROM
+    em_metr ),
 
-data_total AS (
+  data_total AS (
   SELECT
     date,
     country,
@@ -116,15 +111,26 @@ data_total AS (
     is_verified,
     is_unsubscribed ),
 
-    data_country as (
-      select * , sum(account_cnt) over (partition by country) as total_account_by_country,
-      sum(sent_msg) over (partition by country) as total_account_sent_msg
-      from data_total),
+  data_country AS (
+  SELECT
+    *,
+    SUM(account_cnt) OVER (PARTITION BY country) AS total_account_by_country,
+    SUM(sent_msg) OVER (PARTITION BY country) AS total_account_sent_msg
+  FROM
+    data_total ),
 
-      data_send_interval as (
- select *, dense_rank() over (order by total_account_by_country desc) as rank_total_account_by_country,
- dense_rank() over (order by total_account_sent_msg desc) as rank_total_account_sent_msg
- from data_country)
- select * from data_send_interval
- where rank_total_account_by_country <= 10
- or rank_total_account_sent_msg <= 10
+  data_ranked AS (
+  SELECT
+    *,
+    DENSE_RANK() OVER (ORDER BY total_account_by_country DESC) AS rank_total_account_by_country,
+    DENSE_RANK() OVER (ORDER BY total_account_sent_msg DESC) AS rank_total_account_sent_msg
+  FROM
+    data_country )
+
+SELECT
+  *
+FROM
+  data_ranked
+WHERE
+  rank_total_account_by_country <= 10
+  OR rank_total_account_sent_msg <= 10
